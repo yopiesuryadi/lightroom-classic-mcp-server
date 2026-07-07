@@ -1,8 +1,21 @@
 local LrLogger = import "LrLogger"
+local LrFileUtils = import "LrFileUtils"
+local LrPathUtils = import "LrPathUtils"
 local LrTasks = import "LrTasks"
 
 local function appendDebug(message)
-  local path = (os.getenv("HOME") or "/tmp") .. "/Library/Logs/Adobe/Lightroom/LrClassicLogs/LightroomClassicMCPServer.log"
+  local path = LrPathUtils.child(
+    LrPathUtils.child(
+      LrPathUtils.child(
+        LrPathUtils.child(LrPathUtils.child(LrPathUtils.getStandardFilePath("home"), "Library"), "Logs"),
+        "Adobe"
+      ),
+      "Lightroom"
+    ),
+    "LrClassicLogs"
+  )
+  LrFileUtils.createAllDirectories(path)
+  path = LrPathUtils.child(path, "LightroomClassicMCPServer.log")
   local file = io.open(path, "a")
   if file ~= nil then
     file:write(os.date("%Y-%m-%d %H:%M:%S"), "\t", tostring(message), "\n")

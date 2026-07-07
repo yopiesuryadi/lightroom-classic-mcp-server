@@ -3,9 +3,11 @@ return {
   LrSdkMinimumVersion = 8.0,
   LrToolkitIdentifier = "com.yopiesuryadi.lightroom-classic-mcp-server",
   LrPluginName = "Lightroom Classic MCP Server Bridge",
+  LrPluginInfoProvider = "PluginInfoProvider.lua",
   LrInitPlugin = "PluginInit.lua",
   LrForceInitPlugin = true,
   LrShutdownPlugin = "PluginShutdown.lua",
+  LrShutdownApp = "PluginShutdown.lua",
   LrLibraryMenuItems = {
     {
       title = "Lightroom Classic MCP Server Bridge",
