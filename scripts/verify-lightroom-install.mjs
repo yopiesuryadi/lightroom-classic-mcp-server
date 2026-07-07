@@ -58,7 +58,7 @@ function checkBridgeHealth() {
 
 function findLightroomClassicProcesses() {
   try {
-    const output = execFileSync("pgrep", ["-fil", "Adobe Lightroom Classic"], {
+    const output = execFileSync("ps", ["-axo", "pid=,command="], {
       encoding: "utf8"
     }).trim();
     return output
@@ -66,6 +66,30 @@ function findLightroomClassicProcesses() {
       .filter((line) => line.includes("/Adobe Lightroom Classic.app/Contents/MacOS/Adobe Lightroom Classic"));
   } catch {
     return [];
+  }
+}
+
+async function checkLatestStartupLog() {
+  const logFile = path.join(
+    os.homedir(),
+    "Library",
+    "Application Support",
+    "Adobe",
+    "Lightroom",
+    "lrc_console.log"
+  );
+
+  try {
+    const log = await fs.readFile(logFile, "utf8");
+    if (log.includes("Lightroom Classic MCP Server Bridge")) {
+      console.log("Latest Lightroom startup log lists this plugin as installed.");
+    } else if (log.includes("Installed Plugins:")) {
+      console.log(
+        "Latest Lightroom startup log does not list this plugin yet; restart Lightroom Classic or add it in Plug-in Manager."
+      );
+    }
+  } catch {
+    // The console log is optional; the installed folder check above is the source of truth.
   }
 }
 
@@ -79,6 +103,7 @@ async function main() {
   } else {
     console.log("Lightroom Classic does not appear to be running.");
   }
+  await checkLatestStartupLog();
 
   const bridgeHealthy = await checkBridgeHealth();
   if (bridgeHealthy) {

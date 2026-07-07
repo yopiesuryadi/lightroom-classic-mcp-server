@@ -75,6 +75,8 @@ In Lightroom Classic, after installing or updating the plugin:
 3. If it is not listed, click `Add` and select the installed `LightroomClassicMCPServer.lrplugin` folder above.
 4. Keep Lightroom Classic open so the plugin can poll the local bridge.
 
+If Lightroom Classic was already running when you installed the plugin, quit and reopen Lightroom Classic, or manually add/reload the plugin in Plug-in Manager. Lightroom does not always load a newly copied `.lrplugin` folder until that happens.
+
 Then add the MCP server command to your MCP client configuration and restart that client.
 
 For a real local smoke test on this Mac, keep Lightroom Classic open with the plugin enabled, then run:
@@ -293,6 +295,8 @@ If the process in the lock file is no longer running, a new server should replac
 ### Jobs stay queued
 
 Queued jobs usually mean the Node MCP server is running but the Lightroom Classic plugin has not claimed work. Check that the plugin is installed, enabled, and configured for the same bridge host and port.
+
+For local smoke testing, a timeout before the import job changes from `queued` means the Lightroom plugin is not polling the bridge. Restart Lightroom Classic or add/reload `LightroomClassicMCPServer.lrplugin` in Plug-in Manager, then rerun `npm run smoke:local`.
 
 ### Jobs fail immediately
 
