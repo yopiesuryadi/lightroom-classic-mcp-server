@@ -64,7 +64,7 @@ The installer copies this repository's plugin to:
 ~/Library/Application Support/Adobe/Lightroom/Modules/LightroomClassicMCPServer.lrplugin
 ```
 
-It deliberately uses a distinct folder name and preserves any older `LightroomMCP.lrplugin` folder. It replaces an existing `LightroomClassicMCPServer.lrplugin` only when that folder already looks like this project, unless you explicitly pass `--force`. Disable older duplicate plugin entries in Lightroom Classic if more than one appears in Plug-in Manager.
+It deliberately uses a distinct folder name and preserves any older `LightroomMCP.lrplugin` folder. If an existing `LightroomClassicMCPServer.lrplugin` already looks like this project, the installer moves it to a timestamped backup before copying the current plugin; it refuses to replace unrelated folders unless you explicitly pass `--force`. Disable older duplicate plugin entries in Lightroom Classic if more than one appears in Plug-in Manager.
 
 In Lightroom Classic, after installing or updating the plugin:
 
@@ -110,7 +110,7 @@ npm run install:plugin
 npm run verify:plugin
 ```
 
-`install:lightroom-plugin` is kept as a descriptive alias for `install:plugin`. The installer creates the Lightroom Modules folder if needed and copies the repository plugin into place without overwriting unrelated plugin folders. The verifier checks the installed plugin folder, expected toolkit identifier, and the local bridge health endpoint if the MCP server is already running.
+`install:lightroom-plugin` is kept as a descriptive alias for `install:plugin`. The installer creates the Lightroom Modules folder if needed, backs up same-project installs, and copies the repository plugin into place without overwriting unrelated plugin folders. The verifier checks the installed plugin folder, expected toolkit identifier, Lightroom Classic process status, and the local bridge health endpoint if the MCP server is already running.
 
 ## Configuration
 
