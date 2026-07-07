@@ -67,7 +67,7 @@ The bridge host and port are configurable with `LRC_MCP_BRIDGE_HOST` and `LRC_MC
 
 ## Lightroom Classic Work Model
 
-The intended Lightroom-side operations are non-generative and catalog-oriented:
+The Lightroom-side operations are non-generative and catalog-oriented:
 
 - import files or folders;
 - add imported photos to collections;
@@ -80,6 +80,14 @@ The TypeScript side should not claim a Lightroom operation succeeded until the p
 
 ## Current Implementation State
 
-The TypeScript MCP server and HTTP bridge are implemented. The Lightroom Classic plugin is a compile-free Lua skeleton with request/response logging, polling, job claiming, status updates, and explicit TODOs for Lightroom SDK calls.
+The TypeScript MCP server and HTTP bridge are implemented. The Lightroom Classic plugin is a compile-free Lua plugin with request/response logging, polling, job claiming, status updates, and minimal real Lightroom SDK calls for a small end-to-end workflow.
 
-The skeleton intentionally reports unimplemented Lightroom operations as failed jobs. This is preferable to returning success before real Lightroom Classic automation exists.
+Current Lightroom-side operations include:
+
+- importing explicit files, or files from explicit folders, into the active catalog;
+- optionally adding imported photos to a top-level collection;
+- applying an allowlisted set of non-destructive develop settings through plugin-scoped develop presets;
+- exporting the last imported photos, current selection, or a top-level collection to JPEG files, defaulting to `~/Documents/leica`;
+- reporting running, succeeded, and failed job states with progress or error details.
+
+The implementation is intentionally narrow. It does not yet cover metadata editing, named Lightroom export presets, recursive collection lookup, large catalog batch orchestration, or a fully automated disposable-image end-to-end test. The README smoke test asks users to validate with one disposable image before using it on real work.
