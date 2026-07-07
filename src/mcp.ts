@@ -50,7 +50,11 @@ export async function startMcpServer(
       collection: z.string().optional().describe("Collection to export from."),
       selected_only: z.boolean().default(false).describe("Export current Lightroom selection only."),
       output_dir: z.string().default(config.outputDir).describe("Export destination folder."),
-      preset: z.string().optional().describe("Optional Lightroom export preset name.")
+      preset: z.string().optional().describe("Reserved for future Lightroom export preset support."),
+      export_settings: z
+        .record(z.unknown())
+        .optional()
+        .describe("Optional advanced Lightroom export settings table override.")
     },
     async (request) => {
       const job = jobs.create("export", request);
@@ -65,11 +69,21 @@ export async function startMcpServer(
 
   server.tool(
     "start_edit_tracking",
-    "Queue a placeholder edit job for Lightroom-side adjustments or metadata operations.",
+    "Queue a Lightroom-side non-destructive develop settings job.",
     {
-      target: z.string().describe("Photo, collection, or selection target understood by the plugin."),
-      operation: z.string().describe("Lightroom Classic operation for the plugin to perform."),
-      parameters: z.record(z.unknown()).default({}).describe("Operation-specific parameters.")
+      target: z
+        .string()
+        .describe("Target understood by the plugin: selection, selected, last_import, or last_imported."),
+      collection: z.string().optional().describe("Optional top-level collection name to edit."),
+      operation: z
+        .string()
+        .describe("Use apply_develop_settings, apply_settings, or apply_preset."),
+      parameters: z
+        .record(z.unknown())
+        .default({})
+        .describe(
+          "Develop settings object. Supported keys include exposure, contrast, highlights, shadows, whites, blacks, texture, clarity, dehaze, vibrance, and saturation."
+        )
     },
     async (request) => {
       const job = jobs.create("edit", request);
