@@ -32,6 +32,22 @@ function expandHome(value) {
   return value;
 }
 
+function stageForLightroom(inputPath) {
+  const documentsPrefix = path.join(os.homedir(), "Documents") + path.sep;
+  if (!inputPath.startsWith(documentsPrefix)) return inputPath;
+
+  const stageDir = path.join(os.homedir(), "Pictures", "Lightroom", "MCP Imports");
+  fs.mkdirSync(stageDir, { recursive: true });
+  const parsed = path.parse(inputPath);
+  let target = path.join(stageDir, parsed.base);
+  if (fs.existsSync(target)) {
+    const stamp = new Date().toISOString().replaceAll(":", "").replace(/\..+$/, "");
+    target = path.join(stageDir, `${parsed.name}-${stamp}${parsed.ext}`);
+  }
+  fs.copyFileSync(inputPath, target);
+  return target;
+}
+
 function waitForBridgeListen(server) {
   if (server.listening) return Promise.resolve();
   return new Promise((resolve, reject) => {
@@ -85,6 +101,7 @@ async function main() {
   if (!fs.existsSync(inputPath) || !fs.statSync(inputPath).isFile()) {
     throw new Error(`Input photo does not exist or is not a file: ${inputPath}`);
   }
+  const lightroomInputPath = stageForLightroom(inputPath);
 
   const config = loadConfig();
   const outputDir = expandHome(argValue("--output-dir") ?? config.outputDir);
@@ -100,6 +117,7 @@ async function main() {
 
   console.log(`bridge listening: http://${config.bridgeHost}:${config.bridgePort}`);
   console.log(`input: ${inputPath}`);
+  if (lightroomInputPath !== inputPath) console.log(`lightroom_input: ${lightroomInputPath}`);
   console.log(`output_dir: ${outputDir}`);
   console.log(`collection: ${collection}`);
 
@@ -108,7 +126,7 @@ async function main() {
       jobs,
       "import",
       {
-        paths: [inputPath],
+        paths: [lightroomInputPath],
         collection
       },
       timeoutMs

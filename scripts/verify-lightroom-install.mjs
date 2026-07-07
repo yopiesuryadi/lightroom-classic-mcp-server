@@ -19,7 +19,7 @@ const pluginDir = path.join(modulesDir, pluginName);
 const infoLua = path.join(pluginDir, "Info.lua");
 const bridgePort = Number.parseInt(process.env.LRC_MCP_BRIDGE_PORT ?? "58765", 10);
 const bridgeHost = process.env.LRC_MCP_BRIDGE_HOST ?? "127.0.0.1";
-const toolkitIdentifier = "com.yopiesuryadi.lightroom-classic-mcp-server";
+const toolkitIdentifier = "com.yopiesuryadi.lightroomclassicmcpserver";
 
 async function assertInstalledPlugin() {
   const stat = await fs.stat(pluginDir);

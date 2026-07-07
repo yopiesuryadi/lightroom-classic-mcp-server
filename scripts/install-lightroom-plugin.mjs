@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -18,9 +19,17 @@ const modulesDir = path.join(
   "Modules"
 );
 const targetPlugin = path.join(modulesDir, installedPluginName);
+const disabledModulesDir = path.join(
+  os.homedir(),
+  "Library",
+  "Application Support",
+  "Adobe",
+  "Lightroom",
+  "DisabledModules"
+);
 const legacyPlugin = path.join(modulesDir, "LightroomMCP.lrplugin");
 const previousRepoNamedInstall = path.join(modulesDir, sourcePluginName);
-const toolkitIdentifier = "com.yopiesuryadi.lightroom-classic-mcp-server";
+const toolkitIdentifier = "com.yopiesuryadi.lightroomclassicmcpserver";
 const force = process.argv.includes("--force");
 
 function fail(message) {
@@ -46,12 +55,21 @@ function readInfoLua(pluginPath) {
 
 function backupPath() {
   const stamp = new Date().toISOString().replaceAll(":", "").replace(/\..+$/, "");
-  return path.join(modulesDir, `${installedPluginName}.backup-${stamp}`);
+  return path.join(disabledModulesDir, `${installedPluginName}.backup-${stamp}`);
 }
 
 function backupLegacyRepoNamedInstallPath() {
   const stamp = new Date().toISOString().replaceAll(":", "").replace(/\..+$/, "");
-  return path.join(modulesDir, `${sourcePluginName}.backup-${stamp}`);
+  return path.join(disabledModulesDir, `${sourcePluginName}.backup-${stamp}`);
+}
+
+function trashPath(targetPath) {
+  try {
+    execFileSync("trash", [targetPath], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 if (!isDirectory(sourcePlugin)) {
@@ -59,9 +77,17 @@ if (!isDirectory(sourcePlugin)) {
 }
 
 fs.mkdirSync(modulesDir, { recursive: true });
+fs.mkdirSync(disabledModulesDir, { recursive: true });
 
 if (isDirectory(legacyPlugin)) {
-  console.log(`Preserving existing legacy plugin: ${legacyPlugin}`);
+  if (trashPath(legacyPlugin)) {
+    console.log(`Moved legacy Lightroom MCP plugin to Trash: ${legacyPlugin}`);
+  } else {
+    const stamp = new Date().toISOString().replaceAll(":", "").replace(/\..+$/, "");
+    const backup = path.join(disabledModulesDir, `LightroomMCP.lrplugin.disabled-${stamp}`);
+    console.log(`Moving legacy Lightroom MCP plugin to ${backup}`);
+    fs.renameSync(legacyPlugin, backup);
+  }
 }
 
 if (isDirectory(previousRepoNamedInstall)) {
@@ -103,6 +129,21 @@ fs.cpSync(sourcePlugin, targetPlugin, {
   force: false,
   preserveTimestamps: true
 });
+
+function chmodPluginTree(pluginPath) {
+  fs.chmodSync(pluginPath, 0o755);
+  for (const name of fs.readdirSync(pluginPath)) {
+    const entryPath = path.join(pluginPath, name);
+    const stat = fs.statSync(entryPath);
+    if (stat.isDirectory()) {
+      chmodPluginTree(entryPath);
+    } else {
+      fs.chmodSync(entryPath, 0o644);
+    }
+  }
+}
+
+chmodPluginTree(targetPlugin);
 
 console.log(`Installed ${sourcePluginName} to ${targetPlugin}`);
 console.log("Restart Lightroom Classic, or enable/reload the plugin in File > Plug-in Manager.");

@@ -1,5 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { z } from "zod";
 import type { ServerConfig } from "./config.js";
 import type { JobStore } from "./jobs.js";
@@ -9,6 +12,29 @@ function jsonText(value: unknown): { content: Array<{ type: "text"; text: string
   return {
     content: [{ type: "text", text: JSON.stringify(value, null, 2) }]
   };
+}
+
+function expandHome(value: string): string {
+  if (value === "~") return os.homedir();
+  if (value.startsWith("~/")) return path.join(os.homedir(), value.slice(2));
+  return value;
+}
+
+function stageLightroomImportPath(input: string): string {
+  const inputPath = expandHome(input);
+  const documentsPrefix = path.join(os.homedir(), "Documents") + path.sep;
+  if (!inputPath.startsWith(documentsPrefix)) return inputPath;
+
+  const stageDir = path.join(os.homedir(), "Pictures", "Lightroom", "MCP Imports");
+  fs.mkdirSync(stageDir, { recursive: true });
+  const parsed = path.parse(inputPath);
+  let target = path.join(stageDir, parsed.base);
+  if (fs.existsSync(target)) {
+    const stamp = new Date().toISOString().replaceAll(":", "").replace(/\..+$/, "");
+    target = path.join(stageDir, `${parsed.name}-${stamp}${parsed.ext}`);
+  }
+  fs.copyFileSync(inputPath, target);
+  return target;
 }
 
 export async function startMcpServer(
@@ -33,7 +59,8 @@ export async function startMcpServer(
         .describe("Optional destination folder for Lightroom's import move/copy flow.")
     },
     async (request) => {
-      const job = jobs.create("import", request);
+      const stagedRequest = { ...request, paths: request.paths.map(stageLightroomImportPath) };
+      const job = jobs.create("import", stagedRequest);
       logger.info("queued import job", { job_id: job.id, paths: request.paths.length });
       return jsonText({
         job_id: job.id,

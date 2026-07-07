@@ -1,9 +1,10 @@
-local LrView = import "LrView"
+local PluginBootstrap = require "PluginBootstrap"
 
 local PluginInfoProvider = {}
 
-function PluginInfoProvider.sectionsForTopOfDialog(_, propertyTable)
-  local f = LrView.osFactory()
+PluginBootstrap.ensureStarted("PluginInfoProvider")
+
+function PluginInfoProvider.sectionsForTopOfDialog(f, propertyTable)
   return {
     {
       title = "Lightroom Classic MCP Server Bridge",

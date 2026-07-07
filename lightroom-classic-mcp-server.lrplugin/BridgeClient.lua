@@ -13,19 +13,30 @@ local bridgePort = "58765"
 local running = true
 local lastImportedPhotos = {}
 
+local function homePath()
+  if os.getenv ~= nil then
+    local envHome = os.getenv("HOME")
+    if envHome ~= nil and envHome ~= "" then
+      return envHome
+    end
+  end
+
+  local ok, path = pcall(function()
+    return LrPathUtils.getStandardFilePath("home")
+  end)
+  if ok and path ~= nil and path ~= "" then
+    return path
+  end
+
+  return "/tmp"
+end
+
 local function appendDebug(message)
-  local path = LrPathUtils.child(
-    LrPathUtils.child(
-      LrPathUtils.child(
-        LrPathUtils.child(LrPathUtils.child(LrPathUtils.getStandardFilePath("home"), "Library"), "Logs"),
-        "Adobe"
-      ),
-      "Lightroom"
-    ),
-    "LrClassicLogs"
-  )
-  LrFileUtils.createAllDirectories(path)
-  path = LrPathUtils.child(path, "LightroomClassicMCPServer.log")
+  local path = homePath() .. "/Documents/LrClassicLogs"
+  pcall(function()
+    LrFileUtils.createAllDirectories(path)
+  end)
+  path = path .. "/LightroomClassicMCPServer.log"
   local file = io.open(path, "a")
   if file ~= nil then
     file:write(os.date("%Y-%m-%d %H:%M:%S"), "\t", tostring(message), "\n")
@@ -78,21 +89,26 @@ local settingAliases = {
   whites = "Whites2012",
 }
 
-local function jsonEncode(value)
-  if type(value) == "table" and import("LrJson") ~= nil then
-    return import("LrJson").encode(value)
+local JSON = nil
+
+local function json()
+  if JSON ~= nil then
+    return JSON
   end
-  return "{}"
+
+  JSON = require "JSON"
+  return JSON
+end
+
+local function jsonEncode(value)
+  return json():encode(value)
 end
 
 local function jsonDecode(value)
   if value == nil or value == "" then
     return nil
   end
-  if import("LrJson") ~= nil then
-    return import("LrJson").decode(value)
-  end
-  return nil
+  return json():decode(value)
 end
 
 local function post(path, payload)
@@ -129,10 +145,10 @@ local function expandHome(path)
     return nil
   end
   if path == "~" then
-    return os.getenv("HOME")
+    return homePath()
   end
   if string.sub(path, 1, 2) == "~/" then
-    return LrPathUtils.child(os.getenv("HOME"), string.sub(path, 3))
+    return LrPathUtils.child(homePath(), string.sub(path, 3))
   end
   return path
 end
@@ -353,37 +369,45 @@ local function runImport(job, logger)
   }, logger)
   logger:info("Starting import job " .. job.id)
 
-  local ok, result = pcall(function()
+  local ok, result = LrTasks.pcall(function()
     local catalog = LrApplication.activeCatalog()
     local paths = collectImportPaths(job.request)
     local imported = {}
     local appliedSettings = {}
     local reused = 0
 
-    catalog:withWriteAccessDo("Lightroom MCP import", function()
-      local collection = getOrCreateCollection(catalog, job.request.collection)
+    for index, path in ipairs(paths) do
+      appendDebug("Importing path " .. tostring(path))
+      local importPath = path
+      updateJob(job.id, {
+        status = "running",
+        progress = {
+          current = index,
+          total = #paths,
+          message = "Importing " .. LrPathUtils.leafName(importPath)
+        }
+      }, logger)
 
-      for index, path in ipairs(paths) do
-        updateJob(job.id, {
-          status = "running",
-          progress = {
-            current = index,
-            total = #paths,
-            message = "Importing " .. LrPathUtils.leafName(path)
-          }
-        }, logger)
-
-        local photo = catalog:findPhotoByPath(path)
+      catalog:withWriteAccessDo("Lightroom MCP import", function()
+        appendDebug("Import write access granted for job " .. tostring(job.id))
+        local photo = catalog:findPhotoByPath(importPath)
         if photo == nil then
-          photo = catalog:addPhoto(path)
+          appendDebug("Adding new photo " .. tostring(importPath))
+          photo = catalog:addPhoto(importPath)
+          appendDebug("Added new photo " .. tostring(importPath))
         else
           reused = reused + 1
+          appendDebug("Reusing existing photo " .. tostring(importPath))
         end
 
         appendValue(imported, photo)
-      end
+      end)
+    end
 
+    catalog:withWriteAccessDo("Lightroom MCP import finalize", function()
+      local collection = getOrCreateCollection(catalog, job.request.collection)
       if collection ~= nil and #imported > 0 then
+        appendDebug("Adding imported photos to collection " .. tostring(job.request.collection))
         collection:addPhotos(imported)
       end
 
@@ -392,9 +416,10 @@ local function runImport(job, logger)
         for index = 2, #imported do
           appendValue(additional, imported[index])
         end
+        appendDebug("Selecting imported photos")
         catalog:setSelectedPhotos(imported[1], additional)
       end
-    end, { timeout = 30 })
+    end)
 
     local developParameters = requestDevelopParameters(job.request)
     if developParameters ~= nil then
@@ -418,7 +443,7 @@ local function runImport(job, logger)
             photo:applyDevelopPreset(preset, _PLUGIN)
           end
         end
-      end, { timeout = 30 })
+      end)
     end
 
     lastImportedPhotos = imported
@@ -455,7 +480,7 @@ local function runExport(job, logger)
   }, logger)
   logger:info("Starting export job " .. job.id)
 
-  local ok, result = pcall(function()
+  local ok, result = LrTasks.pcall(function()
     local outputDir = expandHome(job.request.output_dir or "~/Documents/leica")
     LrFileUtils.createAllDirectories(outputDir)
 
@@ -533,7 +558,7 @@ local function runEdit(job, logger)
   }, logger)
   logger:info("Starting develop/edit job " .. job.id .. " operation=" .. tostring(job.request.operation))
 
-  local ok, result = pcall(function()
+  local ok, result = LrTasks.pcall(function()
     local operation = job.request.operation
     if operation ~= "apply_develop_settings" and operation ~= "apply_settings" and operation ~= "develop_settings" and operation ~= "develop" then
       error("Unsupported edit operation: " .. tostring(operation) .. ". Supported operation: apply_develop_settings.")
@@ -611,7 +636,7 @@ function BridgeClient.start(logger)
     logger:info("Starting poll loop for Lightroom Classic MCP bridge")
 
     while running do
-      local ok, response = pcall(function()
+      local ok, response = LrTasks.pcall(function()
         return post("/plugin/claim-next", {})
       end)
 
@@ -619,7 +644,7 @@ function BridgeClient.start(logger)
         appendDebug("Claimed MCP job " .. response.job.id .. " (" .. response.job.kind .. ")")
         logger:info("Claimed MCP job " .. response.job.id .. " (" .. response.job.kind .. ")")
         LrTasks.startAsyncTask(function()
-          local success, err = pcall(function()
+          local success, err = LrTasks.pcall(function()
             runJob(response.job, logger)
           end)
           if not success then
