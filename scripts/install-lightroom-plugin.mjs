@@ -49,6 +49,11 @@ function backupPath() {
   return path.join(modulesDir, `${installedPluginName}.backup-${stamp}`);
 }
 
+function backupLegacyRepoNamedInstallPath() {
+  const stamp = new Date().toISOString().replaceAll(":", "").replace(/\..+$/, "");
+  return path.join(modulesDir, `${sourcePluginName}.backup-${stamp}`);
+}
+
 if (!isDirectory(sourcePlugin)) {
   fail(`source plugin folder not found: ${sourcePlugin}`);
 }
@@ -60,9 +65,16 @@ if (isDirectory(legacyPlugin)) {
 }
 
 if (isDirectory(previousRepoNamedInstall)) {
-  console.log(
-    `Found older repo-named install at ${previousRepoNamedInstall}; leaving it untouched.`
-  );
+  const existingInfo = readInfoLua(previousRepoNamedInstall);
+  if (existingInfo.includes(toolkitIdentifier)) {
+    const backup = backupLegacyRepoNamedInstallPath();
+    console.log(`Moving older repo-named installation to ${backup}`);
+    fs.renameSync(previousRepoNamedInstall, backup);
+  } else {
+    console.log(
+      `Found unrelated repo-named install at ${previousRepoNamedInstall}; leaving it untouched.`
+    );
+  }
 }
 
 if (fs.existsSync(targetPlugin)) {

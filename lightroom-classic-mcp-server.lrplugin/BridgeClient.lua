@@ -1,6 +1,7 @@
 local LrApplication = import "LrApplication"
 local LrExportSession = import "LrExportSession"
 local LrFileUtils = import "LrFileUtils"
+local LrFunctionContext = import "LrFunctionContext"
 local LrHttp = import "LrHttp"
 local LrPathUtils = import "LrPathUtils"
 local LrTasks = import "LrTasks"
@@ -11,6 +12,15 @@ local bridgeHost = "127.0.0.1"
 local bridgePort = "58765"
 local running = true
 local lastImportedPhotos = {}
+
+local function appendDebug(message)
+  local path = (os.getenv("HOME") or "/tmp") .. "/Library/Logs/Adobe/Lightroom/LrClassicLogs/LightroomClassicMCPServer.log"
+  local file = io.open(path, "a")
+  if file ~= nil then
+    file:write(os.date("%Y-%m-%d %H:%M:%S"), "\t", tostring(message), "\n")
+    file:close()
+  end
+end
 
 local allowedDevelopSettings = {
   Blacks2012 = true,
@@ -585,7 +595,8 @@ end
 function BridgeClient.start(logger)
   running = true
 
-  LrTasks.startAsyncTask(function()
+  LrFunctionContext.postAsyncTaskWithContext("LightroomClassicMcpServerPollLoop", function()
+    appendDebug("Starting poll loop")
     logger:info("Starting poll loop for Lightroom Classic MCP bridge")
 
     while running do
@@ -594,6 +605,7 @@ function BridgeClient.start(logger)
       end)
 
       if ok and response ~= nil and response.job ~= nil then
+        appendDebug("Claimed MCP job " .. response.job.id .. " (" .. response.job.kind .. ")")
         logger:info("Claimed MCP job " .. response.job.id .. " (" .. response.job.kind .. ")")
         LrTasks.startAsyncTask(function()
           local success, err = pcall(function()
@@ -608,6 +620,7 @@ function BridgeClient.start(logger)
           end
         end)
       elseif not ok then
+        appendDebug("Bridge poll failed: " .. tostring(response))
         logger:trace("Bridge poll failed: " .. tostring(response))
       end
 
