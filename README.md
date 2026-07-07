@@ -26,6 +26,8 @@ Minimal usable workflow. The TypeScript MCP server, local HTTP bridge, job queue
 
 The included Lightroom Classic plugin polls the bridge, claims jobs, imports files into the active catalog, applies a small allowlisted set of non-destructive develop settings, and exports selected/imported/collection photos as JPEGs. Metadata editing, Lightroom named export presets, recursive collection lookup, and larger batch workflow features are still future work.
 
+For this repository's immediate self-use goal, "working" means this local Mac can install the plugin/server, import one real photo into Lightroom Classic, apply non-generative develop settings, export a JPEG to `/Users/yopiesuryadi/Documents/leica`, and verify the output file exists.
+
 ## Why Async Jobs
 
 Lightroom Classic operations can take longer than an MCP client timeout. Large imports, previews, exports, preset application, metadata writes, and batch workflows may run for minutes. If an MCP tool tries to do all of that inside one synchronous request, Claude, Codex, ChatGPT, or another MCP host can time out before Lightroom finishes.
@@ -74,6 +76,16 @@ In Lightroom Classic, after installing or updating the plugin:
 4. Keep Lightroom Classic open so the plugin can poll the local bridge.
 
 Then add the MCP server command to your MCP client configuration and restart that client.
+
+For a real local smoke test on this Mac, keep Lightroom Classic open with the plugin enabled, then run:
+
+```bash
+npm run build
+npm run install:plugin
+npm run smoke:local -- --input "/absolute/path/to/test-photo.jpg" --output-dir "/Users/yopiesuryadi/Documents/leica"
+```
+
+The smoke script starts the local bridge, queues import, edit, and export jobs, waits for the Lightroom Classic plugin to claim and finish them, and verifies that an exported file exists.
 
 ## Install From This Repository
 
@@ -235,7 +247,15 @@ npm run verify:plugin
 npm start
 ```
 
-Then in Lightroom Classic, confirm the plugin is enabled in `File > Plug-in Manager`. From an MCP client, run:
+Then in Lightroom Classic, confirm the plugin is enabled in `File > Plug-in Manager`.
+
+For the direct local harness:
+
+```bash
+npm run smoke:local -- --input "/absolute/path/to/test-image.jpg" --output-dir "/Users/yopiesuryadi/Documents/leica"
+```
+
+From an MCP client, run:
 
 1. `server_config`
 2. `start_import` with `paths: ["/absolute/path/to/test-image.jpg"]`
