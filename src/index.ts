@@ -11,6 +11,7 @@ const logger = new Logger(config.logFile);
 
 try {
   acquireSingleProcessLock(config.lockFile);
+  logger.info("single-process lock acquired", { lock_file: config.lockFile });
 } catch (error) {
   logger.error("failed to acquire single-process lock", {
     error: error instanceof Error ? error.message : String(error),
@@ -20,6 +21,12 @@ try {
 }
 
 const jobs = new JobStore();
+logger.info("starting Lightroom Classic MCP server", {
+  bridge_host: config.bridgeHost,
+  bridge_port: config.bridgePort,
+  output_dir: config.outputDir,
+  state_dir: config.stateDir
+});
 const bridge = startPluginBridge(config, jobs, logger);
 
 bridge.on("error", (error) => {

@@ -1,6 +1,6 @@
 import http from "node:http";
 import { URL } from "node:url";
-import type { JobStore } from "./jobs.js";
+import type { JobStatus, JobStore } from "./jobs.js";
 import type { Logger } from "./logger.js";
 import type { ServerConfig } from "./config.js";
 
@@ -17,6 +17,12 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
     "cache-control": "no-store"
   });
   res.end(JSON.stringify(body));
+}
+
+const pluginStatuses = new Set<JobStatus>(["running", "succeeded", "failed", "cancelled"]);
+
+function isPluginStatus(value: unknown): value is JobStatus {
+  return typeof value === "string" && pluginStatuses.has(value as JobStatus);
 }
 
 export function startPluginBridge(config: ServerConfig, jobs: JobStore, logger: Logger): http.Server {
@@ -41,12 +47,27 @@ export function startPluginBridge(config: ServerConfig, jobs: JobStore, logger: 
       }
 
       const match = url.pathname.match(/^\/plugin\/jobs\/([^/]+)$/);
+      if (req.method === "GET" && match) {
+        const job = jobs.get(match[1]);
+        if (!job) {
+          sendJson(res, 404, { error: "job not found" });
+          return;
+        }
+        sendJson(res, 200, { job });
+        return;
+      }
+
       if (req.method === "POST" && match) {
         const payload = await readJson(req);
+        if (!isPluginStatus(payload.status)) {
+          sendJson(res, 400, { error: "invalid status" });
+          return;
+        }
+
         const job = jobs.update(match[1], {
-          status: payload.status as any,
-          progress: payload.progress as any,
-          result: payload.result as any,
+          status: payload.status,
+          progress: isRecord(payload.progress) ? payload.progress : undefined,
+          result: isRecord(payload.result) ? payload.result : undefined,
           error: typeof payload.error === "string" ? payload.error : undefined
         });
         if (!job) {
@@ -75,4 +96,8 @@ export function startPluginBridge(config: ServerConfig, jobs: JobStore, logger: 
   });
 
   return server;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

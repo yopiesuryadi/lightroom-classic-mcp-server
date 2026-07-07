@@ -38,7 +38,10 @@ local function post(path, payload)
   return jsonDecode(response), headers
 end
 
-local function updateJob(jobId, payload)
+local function updateJob(jobId, payload, logger)
+  if logger ~= nil and payload ~= nil and payload.status ~= nil then
+    logger:info("Reporting MCP job status " .. jobId .. ": " .. tostring(payload.status))
+  end
   post("/plugin/jobs/" .. jobId, payload)
 end
 
@@ -46,7 +49,8 @@ local function runImport(job, logger)
   updateJob(job.id, {
     status = "running",
     progress = { message = "Starting Lightroom import" }
-  })
+  }, logger)
+  logger:info("Starting import job " .. job.id)
 
   -- TODO: complete catalog import semantics:
   -- 1. Resolve job.request.paths to existing files/folders.
@@ -61,14 +65,15 @@ local function runImport(job, logger)
   updateJob(job.id, {
     status = "failed",
     error = "Lightroom Lua import implementation is not complete yet."
-  })
+  }, logger)
 end
 
 local function runExport(job, logger)
   updateJob(job.id, {
     status = "running",
     progress = { message = "Starting Lightroom export" }
-  })
+  }, logger)
+  logger:info("Starting export job " .. job.id)
 
   -- TODO: wire export settings/presets to catalog:exportPhotos or rendition APIs.
   -- Default Node output_dir is ~/Documents/leica.
@@ -76,21 +81,22 @@ local function runExport(job, logger)
   updateJob(job.id, {
     status = "failed",
     error = "Lightroom Lua export implementation is not complete yet."
-  })
+  }, logger)
 end
 
 local function runEdit(job, logger)
   updateJob(job.id, {
     status = "running",
     progress = { message = "Starting Lightroom edit operation" }
-  })
+  }, logger)
+  logger:info("Starting develop/edit job " .. job.id .. " operation=" .. tostring(job.request.operation))
 
   -- TODO: implement operation dispatch for metadata and develop adjustments.
   logger:error("Edit job received but Lua edit implementation is not complete: " .. job.id)
   updateJob(job.id, {
     status = "failed",
     error = "Lightroom Lua edit implementation is not complete yet."
-  })
+  }, logger)
 end
 
 local function runJob(job, logger)
@@ -104,7 +110,7 @@ local function runJob(job, logger)
     updateJob(job.id, {
       status = "failed",
       error = "Unsupported job kind: " .. tostring(job.kind)
-    })
+    }, logger)
   end
 end
 
@@ -130,7 +136,7 @@ function BridgeClient.start(logger)
             updateJob(response.job.id, {
               status = "failed",
               error = tostring(err)
-            })
+            }, logger)
           end
         end)
       elseif not ok then

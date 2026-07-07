@@ -18,30 +18,41 @@ function isProcessAlive(pid: number): boolean {
 export function acquireSingleProcessLock(lockFile: string): () => void {
   fs.mkdirSync(path.dirname(lockFile), { recursive: true });
 
-  if (fs.existsSync(lockFile)) {
-    const raw = fs.readFileSync(lockFile, "utf8");
+  while (true) {
     try {
-      const existing = JSON.parse(raw) as LockPayload;
+      const payload: LockPayload = {
+        pid: process.pid,
+        started_at: new Date().toISOString()
+      };
+      fs.writeFileSync(lockFile, JSON.stringify(payload, null, 2), { flag: "wx" });
+      break;
+    } catch (error) {
+      if (!isFileExistsError(error)) throw error;
+
+      const raw = fs.readFileSync(lockFile, "utf8");
+      let existing: LockPayload | undefined;
+
+      try {
+        existing = JSON.parse(raw) as LockPayload;
+      } catch {
+        fs.unlinkSync(lockFile);
+        continue;
+      }
+
       if (Number.isInteger(existing.pid) && isProcessAlive(existing.pid)) {
         throw new Error(
           `Another lightroom-classic-mcp-server process is already running with pid ${existing.pid}. ` +
             `Stop it or remove ${lockFile} if the process is stale.`
         );
       }
-    } catch (error) {
-      if (error instanceof SyntaxError) {
-        // Corrupt lock files are treated as stale and replaced below.
-      } else {
-        throw error;
+
+      try {
+        fs.unlinkSync(lockFile);
+      } catch (unlinkError) {
+        if (!isFileNotFoundError(unlinkError)) throw unlinkError;
       }
     }
   }
-
-  const payload: LockPayload = {
-    pid: process.pid,
-    started_at: new Date().toISOString()
-  };
-  fs.writeFileSync(lockFile, JSON.stringify(payload, null, 2));
 
   const release = (): void => {
     try {
@@ -64,4 +75,12 @@ export function acquireSingleProcessLock(lockFile: string): () => void {
   });
 
   return release;
+}
+
+function isFileExistsError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "EEXIST";
+}
+
+function isFileNotFoundError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }

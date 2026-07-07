@@ -95,6 +95,42 @@ export async function startMcpServer(
   );
 
   server.tool(
+    "job_result",
+    "Get the result for a completed Lightroom Classic job.",
+    {
+      job_id: z.string()
+    },
+    async ({ job_id }) => {
+      const job = jobs.get(job_id);
+      if (!job) return jsonText({ error: "job not found", job_id });
+      return jsonText({
+        job_id: job.id,
+        status: job.status,
+        result: job.result ?? null,
+        completed_at: job.completed_at ?? null
+      });
+    }
+  );
+
+  server.tool(
+    "job_error",
+    "Get the error message for a failed Lightroom Classic job.",
+    {
+      job_id: z.string()
+    },
+    async ({ job_id }) => {
+      const job = jobs.get(job_id);
+      if (!job) return jsonText({ error: "job not found", job_id });
+      return jsonText({
+        job_id: job.id,
+        status: job.status,
+        error: job.error ?? null,
+        completed_at: job.completed_at ?? null
+      });
+    }
+  );
+
+  server.tool(
     "list_jobs",
     "List recent Lightroom Classic jobs.",
     {

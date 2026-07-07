@@ -1,7 +1,7 @@
 {
   "name": "lightroom-classic-mcp-server",
   "version": "0.1.0",
-  "description": "Unofficial MCP server and local bridge for Adobe Lightroom Classic automation.",
+  "description": "Unofficial Lightroom Classic MCP server and local bridge for Adobe Lightroom Classic automation.",
   "type": "module",
   "bin": {
     "lightroom-classic-mcp-server": "./dist/index.js"
@@ -21,9 +21,16 @@
   },
   "keywords": [
     "mcp",
+    "mcp-server",
     "lightroom",
     "lightroom-classic",
-    "adobe-lightroom-classic"
+    "adobe-lightroom-classic",
+    "adobe-lightroom",
+    "claude",
+    "codex",
+    "chatgpt",
+    "photo-editing",
+    "photography-workflow"
   ],
   "license": "MIT",
   "dependencies": {
