@@ -203,6 +203,50 @@ export async function startMcpServer(
   );
 
   server.tool(
+    "get_develop_settings",
+    "Queue a job that reads the full develop settings of the target photo (including MaskGroupBasedCorrections) for AI inspection. Poll job_status, then job_result.",
+    {
+      target: z
+        .string()
+        .optional()
+        .describe(
+          "Photo target understood by the plugin: selection, selected, last_import, or last_imported. Defaults to the last plugin-imported photos, then the current Lightroom selection."
+        ),
+      collection: z.string().optional().describe("Optional top-level collection name to read instead of target.")
+    },
+    async (request) => {
+      const job = jobs.create("read_settings", request);
+      logger.info("queued read-settings job", { job_id: job.id });
+      return jsonText({ job_id: job.id, status: job.status });
+    }
+  );
+
+  server.tool(
+    "start_adaptive_edit",
+    "Queue an AI-authored adaptive (masked) develop edit. Pass corrections targeting subject (MaskSubType 1), sky (MaskSubType 2), or background (subject mask with MaskInverted true); Lightroom computes the AI masks when the preset is applied. Local values use XMP scale: LocalExposure2012 valid range is about -1..1 where 1 = +4 stops; values outside valid ranges are silently dropped by Lightroom. Non-destructive.",
+    {
+      target: z
+        .string()
+        .optional()
+        .describe(
+          "Photo target understood by the plugin: selection, selected, last_import, or last_imported. Defaults to the last plugin-imported photos, then the current Lightroom selection."
+        ),
+      collection: z.string().optional().describe("Optional top-level collection name to edit instead of target."),
+      preset_name: z.string().optional().describe("Display name for the generated plugin preset."),
+      settings_raw: z
+        .record(z.unknown())
+        .describe(
+          "Raw develop settings table. For adaptive edits pass { MaskGroupBasedCorrections: [ { What: 'Correction', CorrectionAmount: 1, CorrectionActive: true, CorrectionName, CorrectionSyncID (32-hex), LocalExposure2012, LocalShadows2012, LocalHighlights2012, LocalContrast2012, LocalClarity2012, LocalDehaze, LocalTexture, LocalSaturation, LocalTemperature, LocalTint, LocalCurveRefineSaturation: 100, CorrectionMasks: [ { What: 'Mask/Image', MaskActive: true, MaskName, MaskBlendMode: 0, MaskInverted, MaskSyncID (32-hex), MaskValue: 1, MaskVersion: 1, MaskSubType (1 subject, 2 sky), ReferencePoint: '0.500000 0.500000', ErrorReason: 0 } ] } ] }. Applying a new adaptive edit REPLACES all previous mask corrections, so always include every correction you want to keep."
+        )
+    },
+    async (request) => {
+      const job = jobs.create("edit_adaptive", request);
+      logger.info("queued edit-adaptive job", { job_id: job.id });
+      return jsonText({ job_id: job.id, status: job.status });
+    }
+  );
+
+  server.tool(
     "list_develop_presets",
     "Queue a job that enumerates Lightroom Classic develop presets (folders, names, UUIDs). Poll job_status, then job_result for the preset catalog.",
     {
