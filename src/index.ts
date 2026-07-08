@@ -4,7 +4,7 @@ import { startPluginBridge } from "./http.js";
 import { JobStore } from "./jobs.js";
 import { acquireSingleProcessLock } from "./lock.js";
 import { Logger } from "./logger.js";
-import { startMcpServer } from "./mcp.js";
+import { startMcpHttpServer, startMcpServer } from "./mcp.js";
 
 const config = loadConfig();
 const logger = new Logger(config.logFile);
@@ -31,6 +31,12 @@ const bridge = startPluginBridge(config, jobs, logger);
 
 bridge.on("error", (error) => {
   logger.error("Lightroom plugin bridge failed", { error: error.message });
+  process.exit(1);
+});
+
+const mcpHttp = startMcpHttpServer(config, jobs, logger);
+mcpHttp.on("error", (error) => {
+  logger.error("MCP streamable-http server failed", { error: error.message });
   process.exit(1);
 });
 

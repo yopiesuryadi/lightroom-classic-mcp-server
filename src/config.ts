@@ -19,6 +19,7 @@ function intFromEnv(name: string, fallback: number): number {
 export type ServerConfig = {
   bridgeHost: string;
   bridgePort: number;
+  mcpHttpPort: number;
   inputDir: string;
   outputDir: string;
   stateDir: string;
@@ -34,6 +35,7 @@ export function loadConfig(): ServerConfig {
   return {
     bridgeHost: process.env.LRC_MCP_BRIDGE_HOST ?? "127.0.0.1",
     bridgePort: intFromEnv("LRC_MCP_BRIDGE_PORT", 58765),
+    mcpHttpPort: intFromEnv("LRC_MCP_HTTP_PORT", 58766),
     inputDir: expandHome(process.env.LRC_MCP_INPUT_DIR ?? "~/Pictures"),
     outputDir: expandHome(process.env.LRC_MCP_OUTPUT_DIR ?? "~/Documents/leica"),
     stateDir,

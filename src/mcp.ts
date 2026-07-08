@@ -1,6 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
@@ -80,11 +82,7 @@ function stageLightroomImportPath(input: string): string {
   return target;
 }
 
-export async function startMcpServer(
-  config: ServerConfig,
-  jobs: JobStore,
-  logger: Logger
-): Promise<void> {
+function buildMcpServer(config: ServerConfig, jobs: JobStore, logger: Logger): McpServer {
   const server = new McpServer({
     name: "lightroom-classic-mcp-server",
     version: "0.1.0"
@@ -373,7 +371,81 @@ export async function startMcpServer(
     })
   );
 
+  return server;
+}
+
+export async function startMcpServer(
+  config: ServerConfig,
+  jobs: JobStore,
+  logger: Logger
+): Promise<void> {
+  const server = buildMcpServer(config, jobs, logger);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   logger.info("MCP stdio server connected");
+}
+
+export function startMcpHttpServer(config: ServerConfig, jobs: JobStore, logger: Logger): http.Server {
+  const httpServer = http.createServer((req, res) => {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    if (url.pathname !== "/mcp") {
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "not found" }));
+      return;
+    }
+    if (req.method !== "POST") {
+      res.writeHead(405, { "content-type": "application/json", allow: "POST" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Method not allowed. Stateless transport supports POST only." },
+          id: null
+        })
+      );
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      void (async () => {
+        let body: unknown;
+        try {
+          body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid JSON body" }));
+          return;
+        }
+        try {
+          // Stateless mode: fresh server + transport per request, no session tracking.
+          const server = buildMcpServer(config, jobs, logger);
+          const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+          res.on("close", () => {
+            void transport.close();
+            void server.close();
+          });
+          await server.connect(transport);
+          await transport.handleRequest(req, res, body);
+        } catch (error) {
+          logger.error("MCP HTTP request failed", {
+            error: error instanceof Error ? error.message : String(error)
+          });
+          if (!res.headersSent) {
+            res.writeHead(500, { "content-type": "application/json" });
+            res.end(JSON.stringify({ error: "internal error" }));
+          }
+        }
+      })();
+    });
+  });
+
+  httpServer.listen(config.mcpHttpPort, config.bridgeHost, () => {
+    logger.info("MCP streamable-http server listening", {
+      host: config.bridgeHost,
+      port: config.mcpHttpPort,
+      path: "/mcp"
+    });
+  });
+  return httpServer;
 }
