@@ -207,6 +207,8 @@ Exact file locations and schema names vary by host. The important parts are the 
 - `start_import`: queue a Lightroom Classic import and return a `job_id`.
 - `start_export`: queue a Lightroom Classic export and return a `job_id`.
 - `start_edit_tracking`: queue a non-destructive develop-setting workflow and return a `job_id`.
+- `get_develop_settings`: queue a job that reads the target photo's full develop settings (including mask-based corrections) for AI inspection.
+- `start_adaptive_edit`: queue an AI-authored adaptive (masked) edit; Lightroom computes Select Subject / Sky AI masks when the generated preset is applied. See the AI-Adaptive Editing Loop section for value-scale rules.
 - `get_preview`: queue a fast, low-resolution sRGB JPEG render of the current develop state and return a `job_id`. `job_result` then returns the absolute preview path(s) and the JPEG as inline MCP image content for multimodal AI vision.
 - `list_develop_presets`: queue a job that enumerates develop preset folders, preset names, and UUIDs.
 - `apply_develop_preset`: queue a job that applies an existing develop preset (by name or UUID) non-destructively.
@@ -225,6 +227,10 @@ The preview and develop-setting tools support an AI-adaptive editing loop withou
 2. **Decide:** compare the preview against the intended photographic direction and choose a small develop-setting or preset adjustment.
 3. **Act:** call `start_edit_tracking` with allowlisted develop settings, or call `apply_develop_preset` with a UUID from `list_develop_presets`.
 4. **Verify:** call `get_preview` again and compare the new current develop state before making another adjustment or exporting.
+
+Beyond existing presets, `start_adaptive_edit` accepts raw `MaskGroupBasedCorrections`, so the model can author per-area corrections (subject / sky / background) with free values instead of a fixed preset matrix. Local values use XMP scale (`LocalExposure2012` ±1.0 = ±4 stops); out-of-range values are silently dropped by Lightroom, and a new adaptive edit replaces all previous mask corrections.
+
+For wiring this into an OpenClaw Telegram assistant, see `docs/openclaw.md` and the agent playbook example in `docs/playbook-example.md`.
 
 Adaptive preset selection is still an experiment. Preset enumeration and application are available, but the model or operator is responsible for choosing appropriate presets, avoiding duplicate or ambiguous names by preferring UUIDs, and verifying the result with a preview before export.
 
