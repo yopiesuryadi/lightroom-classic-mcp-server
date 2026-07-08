@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -386,22 +387,13 @@ export async function startMcpServer(
 }
 
 export function startMcpHttpServer(config: ServerConfig, jobs: JobStore, logger: Logger): http.Server {
+  const sessions = new Map<string, StreamableHTTPServerTransport>();
+
   const httpServer = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     if (url.pathname !== "/mcp") {
       res.writeHead(404, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "not found" }));
-      return;
-    }
-    if (req.method !== "POST") {
-      res.writeHead(405, { "content-type": "application/json", allow: "POST" });
-      res.end(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          error: { code: -32000, message: "Method not allowed. Stateless transport supports POST only." },
-          id: null
-        })
-      );
       return;
     }
 
@@ -410,21 +402,47 @@ export function startMcpHttpServer(config: ServerConfig, jobs: JobStore, logger:
     req.on("end", () => {
       void (async () => {
         let body: unknown;
-        try {
-          body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-        } catch {
-          res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: "invalid JSON body" }));
-          return;
+        if (chunks.length > 0) {
+          try {
+            body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          } catch {
+            res.writeHead(400, { "content-type": "application/json" });
+            res.end(JSON.stringify({ error: "invalid JSON body" }));
+            return;
+          }
         }
         try {
-          // Stateless mode: fresh server + transport per request, no session tracking.
-          const server = buildMcpServer(config, jobs, logger);
-          const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-          res.on("close", () => {
-            void transport.close();
-            void server.close();
+          const sessionId = req.headers["mcp-session-id"];
+          const existing = typeof sessionId === "string" ? sessions.get(sessionId) : undefined;
+          if (existing) {
+            await existing.handleRequest(req, res, body);
+            return;
+          }
+
+          if (req.method !== "POST") {
+            res.writeHead(400, { "content-type": "application/json" });
+            res.end(JSON.stringify({ error: "missing or unknown mcp-session-id" }));
+            return;
+          }
+
+          // New session: expect an initialize request.
+          const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => crypto.randomUUID(),
+            onsessioninitialized: (id) => {
+              sessions.set(id, transport);
+              logger.info("MCP HTTP session initialized", { session_id: id, session_count: sessions.size });
+            }
           });
+          transport.onclose = () => {
+            if (transport.sessionId) {
+              sessions.delete(transport.sessionId);
+              logger.info("MCP HTTP session closed", {
+                session_id: transport.sessionId,
+                session_count: sessions.size
+              });
+            }
+          };
+          const server = buildMcpServer(config, jobs, logger);
           await server.connect(transport);
           await transport.handleRequest(req, res, body);
         } catch (error) {
