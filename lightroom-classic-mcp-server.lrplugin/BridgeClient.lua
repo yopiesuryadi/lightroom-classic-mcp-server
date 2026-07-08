@@ -969,6 +969,97 @@ local function runEdit(job, logger)
   }, logger)
 end
 
+local function sanitizeForJson(value, depth)
+  depth = depth or 0
+  if depth > 10 then
+    return nil
+  end
+  local valueType = type(value)
+  if valueType == "string" or valueType == "number" or valueType == "boolean" then
+    return value
+  end
+  if valueType == "table" then
+    local out = {}
+    for key, child in pairs(value) do
+      if type(key) == "string" or type(key) == "number" then
+        local sanitized = sanitizeForJson(child, depth + 1)
+        if sanitized ~= nil then
+          out[key] = sanitized
+        end
+      end
+    end
+    return out
+  end
+  return nil
+end
+
+local function runReadSettings(job, logger)
+  updateJob(job.id, {
+    status = "running",
+    progress = { message = "Reading Lightroom develop settings" }
+  }, logger)
+  logger:info("Starting read-settings job " .. job.id)
+
+  local ok, result = LrTasks.pcall(function()
+    local photos, source = targetPhotos(job.request)
+    if #photos == 0 then
+      error("Read-settings target resolved to zero photos.")
+    end
+    local photo = photos[1]
+    return {
+      source = source,
+      file_name = photo:getFormattedMetadata("fileName"),
+      settings = sanitizeForJson(photo:getDevelopSettings())
+    }
+  end)
+
+  if ok then
+    updateJob(job.id, { status = "succeeded", result = result }, logger)
+  else
+    updateJob(job.id, { status = "failed", error = tostring(result) }, logger)
+  end
+end
+
+local function runEditAdaptive(job, logger)
+  updateJob(job.id, {
+    status = "running",
+    progress = { message = "Applying adaptive develop settings" }
+  }, logger)
+  logger:info("Starting edit-adaptive job " .. job.id)
+
+  local ok, result = LrTasks.pcall(function()
+    local raw = job.request.settings_raw
+    if type(raw) ~= "table" then
+      error("edit_adaptive requires a settings_raw table of develop settings.")
+    end
+    local catalog = LrApplication.activeCatalog()
+    local photos, source = targetPhotos(job.request)
+    if #photos == 0 then
+      error("Adaptive edit target resolved to zero photos.")
+    end
+    local presetName = job.request.preset_name or ("Lightroom MCP Adaptive " .. os.date("%Y%m%d%H%M%S"))
+
+    catalog:withWriteAccessDo("Lightroom MCP adaptive settings", function()
+      local preset = LrApplication.addDevelopPresetForPlugin(_PLUGIN, presetName, raw)
+      for _, photo in ipairs(photos) do
+        if photo.applyDevelopPresetFromPlugin ~= nil then
+          photo:applyDevelopPresetFromPlugin(preset, _PLUGIN)
+        else
+          photo:applyDevelopPreset(preset, _PLUGIN)
+        end
+      end
+    end, { timeout = 30 })
+
+    return { source = source, preset_name = presetName, photo_count = #photos }
+  end)
+
+  if ok then
+    updateJob(job.id, { status = "succeeded", result = result }, logger)
+  else
+    updateJob(job.id, { status = "failed", error = tostring(result) }, logger)
+  end
+end
+
 local function runJob(job, logger)
   if job.kind == "import" then
     runImport(job, logger)
@@ -982,6 +1073,10 @@ local function runJob(job, logger)
     runListPresets(job, logger)
   elseif job.kind == "apply_preset" then
     runApplyPreset(job, logger)
+  elseif job.kind == "read_settings" then
+    runReadSettings(job, logger)
+  elseif job.kind == "edit_adaptive" then
+    runEditAdaptive(job, logger)
   else
     updateJob(job.id, {
       status = "failed",
