@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 
-export type JobKind = "import" | "export" | "edit";
+export type JobKind = "import" | "export" | "edit" | "preview" | "list_presets" | "apply_preset";
 export type JobStatus = "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled";
 
 export type Job = {

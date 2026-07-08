@@ -14,6 +14,49 @@ function jsonText(value: unknown): { content: Array<{ type: "text"; text: string
   };
 }
 
+const maxInlinePreviewBytes = 3_500_000;
+const maxInlinePreviewImages = 4;
+
+function previewPathsFromResult(result: Record<string, unknown> | undefined): string[] {
+  if (!result) return [];
+  const paths: string[] = [];
+  if (Array.isArray(result.previews)) {
+    for (const preview of result.previews) {
+      if (
+        typeof preview === "object" &&
+        preview !== null &&
+        typeof (preview as Record<string, unknown>).path === "string"
+      ) {
+        paths.push((preview as Record<string, unknown>).path as string);
+      }
+    }
+  }
+  if (paths.length === 0 && typeof result.preview_path === "string") {
+    paths.push(result.preview_path);
+  }
+  return paths;
+}
+
+function inlinePreviewImages(
+  result: Record<string, unknown> | undefined
+): Array<{ type: "image"; data: string; mimeType: string }> {
+  const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
+  for (const previewPath of previewPathsFromResult(result).slice(0, maxInlinePreviewImages)) {
+    try {
+      const stat = fs.statSync(previewPath);
+      if (!stat.isFile() || stat.size > maxInlinePreviewBytes) continue;
+      images.push({
+        type: "image",
+        data: fs.readFileSync(previewPath).toString("base64"),
+        mimeType: "image/jpeg"
+      });
+    } catch {
+      // Preview file may already be cleaned up; the path in the result is still reported.
+    }
+  }
+  return images;
+}
+
 function expandHome(value: string): string {
   if (value === "~") return os.homedir();
   if (value.startsWith("~/")) return path.join(os.homedir(), value.slice(2));
@@ -109,7 +152,7 @@ export async function startMcpServer(
         .record(z.unknown())
         .default({})
         .describe(
-          "Develop settings object. Supported keys include exposure, contrast, highlights, shadows, whites, blacks, texture, clarity, dehaze, vibrance, and saturation."
+          "Develop settings object. Supported keys include exposure, contrast, highlights, shadows, whites, blacks, texture, clarity, dehaze, vibrance, saturation, temperature, tint, black_white/grayscale (boolean ConvertToGrayscale), vignette (PostCropVignetteAmount), grain/grain_amount, grain_size, and grain_frequency."
         )
     },
     async (request) => {
@@ -119,6 +162,79 @@ export async function startMcpServer(
         job_id: job.id,
         status: job.status
       });
+    }
+  );
+
+  server.tool(
+    "get_preview",
+    "Queue a fast, low-resolution sRGB JPEG render of the current develop state for AI visual inspection. Returns a job_id immediately (Lightroom renders asynchronously); poll job_status, then call job_result to receive absolute preview file paths plus the preview image content inline.",
+    {
+      target: z
+        .string()
+        .optional()
+        .describe(
+          "Photo target understood by the plugin: selection, selected, last_import, or last_imported. Defaults to the last plugin-imported photos, then the current Lightroom selection."
+        ),
+      collection: z.string().optional().describe("Optional top-level collection name to preview instead of target."),
+      max_dimension: z
+        .number()
+        .int()
+        .min(256)
+        .max(2048)
+        .default(1200)
+        .describe("Longest edge of the preview in pixels (256-2048, default 1200)."),
+      quality: z
+        .number()
+        .int()
+        .min(10)
+        .max(100)
+        .default(70)
+        .describe("JPEG quality percentage (10-100, default 70).")
+    },
+    async (request) => {
+      const job = jobs.create("preview", request);
+      logger.info("queued preview job", { job_id: job.id, max_dimension: request.max_dimension });
+      return jsonText({
+        job_id: job.id,
+        status: job.status,
+        message: "Preview queued. Poll job_status, then fetch job_result for preview paths and inline image content."
+      });
+    }
+  );
+
+  server.tool(
+    "list_develop_presets",
+    "Queue a job that enumerates Lightroom Classic develop presets (folders, names, UUIDs). Poll job_status, then job_result for the preset catalog.",
+    {
+      name_filter: z
+        .string()
+        .optional()
+        .describe("Optional case-insensitive substring filter matched against 'folder/preset name'.")
+    },
+    async (request) => {
+      const job = jobs.create("list_presets", request);
+      logger.info("queued list-presets job", { job_id: job.id });
+      return jsonText({ job_id: job.id, status: job.status });
+    }
+  );
+
+  server.tool(
+    "apply_develop_preset",
+    "Queue a job that applies an existing Lightroom Classic develop preset (matched by name or UUID from list_develop_presets) to the target photos non-destructively.",
+    {
+      preset: z.string().describe("Develop preset name or UUID. UUIDs are unambiguous; names must match exactly (case-insensitive)."),
+      target: z
+        .string()
+        .optional()
+        .describe(
+          "Photo target understood by the plugin: selection, selected, last_import, or last_imported. Defaults to the last plugin-imported photos, then the current Lightroom selection."
+        ),
+      collection: z.string().optional().describe("Optional top-level collection name to apply the preset to.")
+    },
+    async (request) => {
+      const job = jobs.create("apply_preset", request);
+      logger.info("queued apply-preset job", { job_id: job.id, preset: request.preset });
+      return jsonText({ job_id: job.id, status: job.status });
     }
   );
 
@@ -144,12 +260,19 @@ export async function startMcpServer(
     async ({ job_id }) => {
       const job = jobs.get(job_id);
       if (!job) return jsonText({ error: "job not found", job_id });
-      return jsonText({
+      const payload = {
         job_id: job.id,
         status: job.status,
         result: job.result ?? null,
         completed_at: job.completed_at ?? null
-      });
+      };
+      const content: Array<
+        { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+      > = [{ type: "text", text: JSON.stringify(payload, null, 2) }];
+      if (job.kind === "preview" && job.status === "succeeded") {
+        content.push(...inlinePreviewImages(job.result));
+      }
+      return { content };
     }
   );
 

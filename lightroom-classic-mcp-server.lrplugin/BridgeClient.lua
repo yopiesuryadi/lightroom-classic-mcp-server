@@ -1,4 +1,5 @@
 local LrApplication = import "LrApplication"
+local LrDate = import "LrDate"
 local LrExportSession = import "LrExportSession"
 local LrFileUtils = import "LrFileUtils"
 local LrFunctionContext = import "LrFunctionContext"
@@ -48,6 +49,7 @@ local allowedDevelopSettings = {
   Blacks2012 = true,
   Clarity2012 = true,
   Contrast2012 = true,
+  ConvertToGrayscale = true,
   CropAngle = true,
   CropBottom = true,
   CropLeft = true,
@@ -56,7 +58,10 @@ local allowedDevelopSettings = {
   Dehaze = true,
   Exposure2012 = true,
   GrainAmount = true,
+  GrainFrequency = true,
+  GrainSize = true,
   Highlights2012 = true,
+  PostCropVignetteAmount = true,
   Saturation = true,
   Shadows2012 = true,
   Temperature = true,
@@ -66,7 +71,12 @@ local allowedDevelopSettings = {
   Whites2012 = true,
 }
 
+local booleanDevelopSettings = {
+  ConvertToGrayscale = true,
+}
+
 local settingAliases = {
+  black_white = "ConvertToGrayscale",
   blacks = "Blacks2012",
   clarity = "Clarity2012",
   contrast = "Contrast2012",
@@ -79,6 +89,9 @@ local settingAliases = {
   exposure = "Exposure2012",
   grain = "GrainAmount",
   grain_amount = "GrainAmount",
+  grain_frequency = "GrainFrequency",
+  grain_size = "GrainSize",
+  grayscale = "ConvertToGrayscale",
   highlights = "Highlights2012",
   saturation = "Saturation",
   shadows = "Shadows2012",
@@ -86,6 +99,7 @@ local settingAliases = {
   texture = "Texture",
   tint = "Tint",
   vibrance = "Vibrance",
+  vignette = "PostCropVignetteAmount",
   whites = "Whites2012",
 }
 
@@ -281,7 +295,14 @@ local function normalizeDevelopSettings(parameters)
   for key, value in pairs(source or {}) do
     local lrKey = settingAliases[key] or key
     if allowedDevelopSettings[lrKey] then
-      if type(value) ~= "number" then
+      if booleanDevelopSettings[lrKey] then
+        if type(value) == "number" and (value == 0 or value == 1) then
+          value = value == 1
+        end
+        if type(value) ~= "boolean" then
+          error("Develop setting " .. tostring(key) .. " must be true or false.")
+        end
+      elseif type(value) ~= "number" then
         error("Develop setting " .. tostring(key) .. " must be a number.")
       end
       settings[lrKey] = value
@@ -360,6 +381,341 @@ local function defaultExportSettings(outputDir)
     LR_removeLocationMetadata = false,
     LR_size_doConstrain = false,
   }
+end
+
+local previewMaxPhotos = 8
+local previewMaxAgeSeconds = 24 * 60 * 60
+
+local function previewsRoot()
+  return homePath() .. "/.lightroom-classic-mcp-server/previews"
+end
+
+local function clampNumber(value, minValue, maxValue, fallback)
+  if type(value) ~= "number" then
+    return fallback
+  end
+  if value < minValue then
+    return minValue
+  end
+  if value > maxValue then
+    return maxValue
+  end
+  return value
+end
+
+local function cleanupOldPreviews(logger)
+  local ok, err = pcall(function()
+    local root = previewsRoot()
+    if LrFileUtils.exists(root) ~= "directory" then
+      return
+    end
+
+    local now = LrDate.currentTime()
+    local removed = 0
+    for entry in LrFileUtils.directoryEntries(root) do
+      local attributes = LrFileUtils.fileAttributes(entry)
+      local modified = attributes ~= nil
+        and (attributes.fileModificationDate or attributes.fileCreationDate)
+        or nil
+      if modified ~= nil and (now - modified) > previewMaxAgeSeconds then
+        LrFileUtils.delete(entry)
+        removed = removed + 1
+      end
+    end
+
+    if removed > 0 and logger ~= nil then
+      logger:info("Removed " .. removed .. " preview entries older than 24h")
+    end
+  end)
+
+  if not ok and logger ~= nil then
+    logger:warn("Preview cleanup failed: " .. tostring(err))
+  end
+end
+
+local function previewExportSettings(outputDir, maxDimension, jpegQuality)
+  return {
+    LR_collisionHandling = "rename",
+    LR_export_colorSpace = "sRGB",
+    LR_export_destinationPathPrefix = outputDir,
+    LR_export_destinationType = "specificFolder",
+    LR_export_useSubfolder = false,
+    LR_format = "JPEG",
+    LR_jpeg_quality = jpegQuality,
+    LR_minimizeEmbeddedMetadata = true,
+    LR_outputSharpeningOn = false,
+    LR_reimportExportedPhoto = false,
+    LR_removeLocationMetadata = true,
+    LR_size_doConstrain = true,
+    LR_size_maxHeight = maxDimension,
+    LR_size_maxWidth = maxDimension,
+    LR_size_resizeType = "wh",
+    LR_size_units = "pixels",
+  }
+end
+
+local function runPreview(job, logger)
+  updateJob(job.id, {
+    status = "running",
+    progress = { message = "Rendering Lightroom preview" }
+  }, logger)
+  logger:info("Starting preview job " .. job.id)
+
+  local ok, result = LrTasks.pcall(function()
+    local photos, source = targetPhotos(job.request)
+    if #photos == 0 then
+      error("Preview target resolved to zero photos.")
+    end
+
+    local truncated = false
+    if #photos > previewMaxPhotos then
+      local limited = {}
+      for index = 1, previewMaxPhotos do
+        limited[index] = photos[index]
+      end
+      photos = limited
+      truncated = true
+    end
+
+    local maxDimension = math.floor(clampNumber(job.request.max_dimension, 256, 2048, 1200))
+    local quality = math.floor(clampNumber(job.request.quality, 10, 100, 70))
+
+    local outputDir = previewsRoot() .. "/" .. job.id
+    LrFileUtils.createAllDirectories(outputDir)
+
+    local session = LrExportSession({
+      photosToExport = photos,
+      exportSettings = previewExportSettings(outputDir, maxDimension, quality / 100)
+    })
+
+    local previews = {}
+    local failures = {}
+    local total = session:countRenditions()
+
+    for index, rendition in session:renditions() do
+      updateJob(job.id, {
+        status = "running",
+        progress = {
+          current = index,
+          total = total,
+          message = "Rendering preview " .. tostring(index) .. " of " .. tostring(total)
+        }
+      }, logger)
+
+      local success, pathOrMessage = rendition:waitForRender()
+      if success then
+        appendValue(previews, {
+          path = pathOrMessage,
+          file_name = LrPathUtils.leafName(pathOrMessage),
+          local_id = rendition.photo.localIdentifier,
+          source_path = rendition.photo:getRawMetadata("path")
+        })
+      else
+        appendValue(failures, tostring(pathOrMessage))
+      end
+    end
+
+    if #previews == 0 then
+      error("Preview render produced no output: " .. table.concat(failures, "; "))
+    end
+
+    return {
+      preview_count = #previews,
+      preview_path = previews[1].path,
+      previews = previews,
+      failures = failures,
+      truncated = truncated,
+      source = source,
+      max_dimension = maxDimension,
+      quality = quality
+    }
+  end)
+
+  if not ok then
+    failJob(job.id, "Lightroom preview failed: " .. tostring(result), logger)
+    return
+  end
+
+  updateJob(job.id, {
+    status = "succeeded",
+    result = result,
+    progress = {
+      current = result.preview_count,
+      total = result.preview_count,
+      message = "Preview render completed"
+    }
+  }, logger)
+end
+
+local function presetUuid(preset)
+  local uuid = nil
+  pcall(function()
+    uuid = preset:getUuid()
+  end)
+  return uuid
+end
+
+local function runListPresets(job, logger)
+  updateJob(job.id, {
+    status = "running",
+    progress = { message = "Listing Lightroom develop presets" }
+  }, logger)
+  logger:info("Starting list-presets job " .. job.id)
+
+  local ok, result = LrTasks.pcall(function()
+    local filter = job.request.name_filter
+    if type(filter) == "string" and filter ~= "" then
+      filter = string.lower(filter)
+    else
+      filter = nil
+    end
+
+    local folders = {}
+    local presetCount = 0
+
+    for _, folder in ipairs(LrApplication.developPresetFolders()) do
+      local folderName = folder:getName()
+      local presets = {}
+      for _, preset in ipairs(folder:getDevelopPresets()) do
+        local name = preset:getName()
+        local haystack = string.lower(folderName .. "/" .. name)
+        if filter == nil or string.find(haystack, filter, 1, true) ~= nil then
+          appendValue(presets, {
+            name = name,
+            uuid = presetUuid(preset)
+          })
+          presetCount = presetCount + 1
+        end
+      end
+      if #presets > 0 then
+        appendValue(folders, {
+          folder = folderName,
+          presets = presets
+        })
+      end
+    end
+
+    return {
+      folder_count = #folders,
+      preset_count = presetCount,
+      folders = folders
+    }
+  end)
+
+  if not ok then
+    failJob(job.id, "Lightroom preset listing failed: " .. tostring(result), logger)
+    return
+  end
+
+  updateJob(job.id, {
+    status = "succeeded",
+    result = result,
+    progress = { message = "Preset listing completed" }
+  }, logger)
+end
+
+local function findDevelopPreset(identifier)
+  if type(identifier) ~= "string" or identifier == "" then
+    error("apply_develop_preset requires a preset name or UUID string.")
+  end
+
+  local byUuid = nil
+  pcall(function()
+    byUuid = LrApplication.developPresetByUuid(identifier)
+  end)
+  if byUuid ~= nil then
+    return { preset = byUuid, name = byUuid:getName(), uuid = presetUuid(byUuid), folder = nil }
+  end
+
+  local lowered = string.lower(identifier)
+  local matches = {}
+  for _, folder in ipairs(LrApplication.developPresetFolders()) do
+    for _, preset in ipairs(folder:getDevelopPresets()) do
+      local name = preset:getName()
+      local uuid = presetUuid(preset)
+      if uuid == identifier or string.lower(name) == lowered then
+        appendValue(matches, {
+          preset = preset,
+          name = name,
+          uuid = uuid,
+          folder = folder:getName()
+        })
+      end
+    end
+  end
+
+  if #matches == 0 then
+    error("Develop preset not found by name or UUID: " .. identifier)
+  end
+
+  if #matches > 1 then
+    local locations = {}
+    for _, match in ipairs(matches) do
+      appendValue(locations, tostring(match.folder) .. "/" .. match.name .. " (" .. tostring(match.uuid) .. ")")
+    end
+    error(
+      "Develop preset name is ambiguous: "
+        .. identifier
+        .. ". Use a UUID from list_develop_presets. Candidates: "
+        .. table.concat(locations, "; ")
+    )
+  end
+
+  return matches[1]
+end
+
+local function runApplyPreset(job, logger)
+  updateJob(job.id, {
+    status = "running",
+    progress = { message = "Applying Lightroom develop preset" }
+  }, logger)
+  logger:info("Starting apply-preset job " .. job.id)
+
+  local ok, result = LrTasks.pcall(function()
+    local identifier = job.request.preset or job.request.preset_uuid or job.request.preset_name
+    local match = findDevelopPreset(identifier)
+    local catalog = LrApplication.activeCatalog()
+    local photos, source = targetPhotos(job.request)
+
+    catalog:withWriteAccessDo("Lightroom MCP apply develop preset", function()
+      for index, photo in ipairs(photos) do
+        updateJob(job.id, {
+          status = "running",
+          progress = {
+            current = index,
+            total = #photos,
+            message = "Applying preset " .. match.name
+          }
+        }, logger)
+        photo:applyDevelopPreset(match.preset, _PLUGIN)
+      end
+    end, { timeout = 30 })
+
+    return {
+      applied_count = #photos,
+      source = source,
+      preset = {
+        name = match.name,
+        uuid = match.uuid,
+        folder = match.folder
+      }
+    }
+  end)
+
+  if not ok then
+    failJob(job.id, "Lightroom preset apply failed: " .. tostring(result), logger)
+    return
+  end
+
+  updateJob(job.id, {
+    status = "succeeded",
+    result = result,
+    progress = {
+      current = result.applied_count,
+      total = result.applied_count,
+      message = "Develop preset applied"
+    }
+  }, logger)
 end
 
 local function runImport(job, logger)
@@ -620,6 +976,12 @@ local function runJob(job, logger)
     runExport(job, logger)
   elseif job.kind == "edit" then
     runEdit(job, logger)
+  elseif job.kind == "preview" then
+    runPreview(job, logger)
+  elseif job.kind == "list_presets" then
+    runListPresets(job, logger)
+  elseif job.kind == "apply_preset" then
+    runApplyPreset(job, logger)
   else
     updateJob(job.id, {
       status = "failed",
@@ -634,6 +996,8 @@ function BridgeClient.start(logger)
   LrFunctionContext.postAsyncTaskWithContext("LightroomClassicMcpServerPollLoop", function()
     appendDebug("Starting poll loop")
     logger:info("Starting poll loop for Lightroom Classic MCP bridge")
+
+    cleanupOldPreviews(logger)
 
     while running do
       local ok, response = LrTasks.pcall(function()
